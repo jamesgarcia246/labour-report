@@ -92,12 +92,14 @@ const XL = {
 
 function xlStyleRow(row, { fill, font, alignment, border, height } = {}) {
   if (height) row.height = height;
-  row.eachCell({ includeEmpty: true }, cell => {
+  const colCount = (row.worksheet.columns || []).length || row.cellCount;
+  for (let i = 1; i <= colCount; i++) {
+    const cell = row.getCell(i);
     if (fill)      cell.fill      = fill;
     if (font)      cell.font      = font;
     if (alignment) cell.alignment = alignment;
     if (border)    cell.border    = border;
-  });
+  }
 }
 
 function xlTitleRow(ws, text, colCount) {
