@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 
 // ─── Palette & constants ───────────────────────────────────────────────────
 // All employees who require time tracking, grouped by team
@@ -40,63 +40,152 @@ function fmtHrs(n)  { return +n.toFixed(1) }
 function fmtVar(n)  { return n >= 0 ? `+${fmtGBP(n)}` : `-£${Math.abs(Math.round(n)).toLocaleString("en-GB")}` }
 function fmtHrsVar(n){ return n >= 0 ? `+${n.toFixed(1)}` : n.toFixed(1) }
 
+// ─── Excel style constants ────────────────────────────────────────────────
+const XL = {
+  fill: {
+    title:      { type:"pattern", pattern:"solid", fgColor:{ argb:"FF0F172A" } },
+    header:     { type:"pattern", pattern:"solid", fgColor:{ argb:"FF4F46E5" } },
+    subheader:  { type:"pattern", pattern:"solid", fgColor:{ argb:"FF1E293B" } },
+    subtotal:   { type:"pattern", pattern:"solid", fgColor:{ argb:"FF334155" } },
+    total:      { type:"pattern", pattern:"solid", fgColor:{ argb:"FF0F172A" } },
+    rowEven:    { type:"pattern", pattern:"solid", fgColor:{ argb:"FFF8FAFC" } },
+    rowOdd:     { type:"pattern", pattern:"solid", fgColor:{ argb:"FFFFFFFF" } },
+    onBudget:   { type:"pattern", pattern:"solid", fgColor:{ argb:"FFD1FAE5" } },
+    atRisk:     { type:"pattern", pattern:"solid", fgColor:{ argb:"FFFEF3C7" } },
+    overBudget: { type:"pattern", pattern:"solid", fgColor:{ argb:"FFFEE2E2" } },
+  },
+  font: {
+    title:      { name:"Calibri", bold:true,  size:14, color:{ argb:"FFE2E8F0" } },
+    header:     { name:"Calibri", bold:true,  size:10, color:{ argb:"FFFFFFFF" } },
+    subheader:  { name:"Calibri", bold:true,  size:10, color:{ argb:"FFA5B4FC" } },
+    subtotal:   { name:"Calibri", bold:true,  size:10, color:{ argb:"FFE2E8F0" } },
+    total:      { name:"Calibri", bold:true,  size:11, color:{ argb:"FFE2E8F0" } },
+    body:       { name:"Calibri",             size:10, color:{ argb:"FF1E293B" } },
+    bodyBold:   { name:"Calibri", bold:true,  size:10, color:{ argb:"FF1E293B" } },
+    note:       { name:"Calibri", italic:true, size:9, color:{ argb:"FF6366F1" } },
+    onBudget:   { name:"Calibri", bold:true,  size:10, color:{ argb:"FF065F46" } },
+    atRisk:     { name:"Calibri", bold:true,  size:10, color:{ argb:"FF92400E" } },
+    overBudget: { name:"Calibri", bold:true,  size:10, color:{ argb:"FF991B1B" } },
+  },
+  border: {
+    light: {
+      top:    { style:"thin",   color:{ argb:"FFE2E8F0" } },
+      left:   { style:"thin",   color:{ argb:"FFE2E8F0" } },
+      bottom: { style:"thin",   color:{ argb:"FFE2E8F0" } },
+      right:  { style:"thin",   color:{ argb:"FFE2E8F0" } },
+    },
+    header: {
+      top:    { style:"thin",   color:{ argb:"FF6366F1" } },
+      left:   { style:"thin",   color:{ argb:"FF6366F1" } },
+      bottom: { style:"medium", color:{ argb:"FF4F46E5" } },
+      right:  { style:"thin",   color:{ argb:"FF6366F1" } },
+    },
+  },
+  align: {
+    left:        { vertical:"middle", horizontal:"left",   wrapText:false },
+    right:       { vertical:"middle", horizontal:"right",  wrapText:false },
+    center:      { vertical:"middle", horizontal:"center", wrapText:false },
+    leftIndent:  { vertical:"middle", horizontal:"left",   indent:1, wrapText:false },
+    rightIndent: { vertical:"middle", horizontal:"right",  indent:1, wrapText:false },
+  },
+};
+
+function xlStyleRow(row, { fill, font, alignment, border, height } = {}) {
+  if (height) row.height = height;
+  row.eachCell({ includeEmpty: true }, cell => {
+    if (fill)      cell.fill      = fill;
+    if (font)      cell.font      = font;
+    if (alignment) cell.alignment = alignment;
+    if (border)    cell.border    = border;
+  });
+}
+
+function xlTitleRow(ws, text, colCount) {
+  const row = ws.addRow([text]);
+  ws.mergeCells(`A${row.number}:${xlCol(colCount)}${row.number}`);
+  xlStyleRow(row, { fill:XL.fill.title, font:XL.font.title, alignment:XL.align.leftIndent, height:30 });
+  return row;
+}
+
+function xlSectionRow(ws, text, colCount) {
+  const row = ws.addRow([text]);
+  ws.mergeCells(`A${row.number}:${xlCol(colCount)}${row.number}`);
+  xlStyleRow(row, { fill:XL.fill.subheader, font:XL.font.subheader, alignment:XL.align.leftIndent, height:18 });
+  return row;
+}
+
+function xlHeaderRow(ws, values) {
+  const row = ws.addRow(values);
+  xlStyleRow(row, { fill:XL.fill.header, font:XL.font.header, alignment:XL.align.leftIndent, border:XL.border.header, height:20 });
+  return row;
+}
+
+function xlDataRow(ws, values, rowIndex) {
+  const row = ws.addRow(values);
+  const fill = rowIndex % 2 === 0 ? XL.fill.rowEven : XL.fill.rowOdd;
+  xlStyleRow(row, { fill, font:XL.font.body, alignment:XL.align.leftIndent, border:XL.border.light, height:18 });
+  return row;
+}
+
+function xlTotalRow(ws, values) {
+  const row = ws.addRow(values);
+  xlStyleRow(row, { fill:XL.fill.total, font:XL.font.total, alignment:XL.align.leftIndent, height:22 });
+  return row;
+}
+
+function xlSubtotalRow(ws, values) {
+  const row = ws.addRow(values);
+  xlStyleRow(row, { fill:XL.fill.subtotal, font:XL.font.subtotal, alignment:XL.align.leftIndent, height:18 });
+  return row;
+}
+
+function xlStatusStyle(status) {
+  if (status === "On Budget") return { fill:XL.fill.onBudget, font:XL.font.onBudget };
+  if (status === "At Risk")   return { fill:XL.fill.atRisk,   font:XL.font.atRisk };
+  return                               { fill:XL.fill.overBudget, font:XL.font.overBudget };
+}
+
+function xlCol(n) {
+  let s = "";
+  while (n > 0) { n--; s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26); }
+  return s;
+}
+
 // ─── Excel generation ──────────────────────────────────────────────────────
 function buildExcel({ timesheetRows, taskRows, team, month, year, workingDays }) {
-  const wb = XLSX.utils.book_new();
-
   const rateMap = {};
   team.forEach(t => { rateMap[t.name] = parseFloat(t.rate) || 0; });
   const avgRate = team.reduce((s,t) => s + (parseFloat(t.rate)||0), 0) / team.length;
 
-  // ── Build project map from task-list (budgets only) ─────────────────────
-  // Use task-list for BUDGET hours (duration field)
-  // Use TIMESHEET for ACTUAL hours — single source of truth
+  // ── Build project map from task-list (budgets only) ──────────────────────
   const projBudget = {};
   const projCustomer = {};
   taskRows.forEach(r => {
     const proj = (r.project || "").trim();
     if (!proj) return;
     const dur = parseFloat(r.duration) || 0;
-    // FIX: only count duration > 0 toward budget (ignores placeholder 0-duration tasks)
-    if (dur > 0) {
-      projBudget[proj]   = (projBudget[proj] || 0) + dur;
-    }
+    if (dur > 0) projBudget[proj] = (projBudget[proj] || 0) + dur;
     if (!projCustomer[proj]) projCustomer[proj] = r.customer_name || "";
   });
 
-  // ── FIX 3: Aggregate ACTUAL hours from timesheet per project ─────────────
+  // ── Aggregate ACTUAL hours from timesheet per project ────────────────────
   const projActual = {};
   const personHrs  = {};
-  const personProjHrs = {}; // for per-person-per-project breakdown
   timesheetRows.forEach(r => {
     const proj = (r.project_description || "").trim();
     const name = (r.user_name || "").trim();
     const hrs  = parseFloat(r.hours) || 0;
-    if (proj) projActual[proj]  = (projActual[proj] || 0) + hrs;
-    if (name) personHrs[name]   = (personHrs[name] || 0) + hrs;
-    if (proj && name) {
-      if (!personProjHrs[proj]) personProjHrs[proj] = {};
-      personProjHrs[proj][name] = (personProjHrs[proj][name] || 0) + hrs;
-    }
-    // Capture customer from timesheet for projects missing from task-list
+    if (proj) projActual[proj] = (projActual[proj] || 0) + hrs;
+    if (name) personHrs[name]  = (personHrs[name]  || 0) + hrs;
     if (proj && !projCustomer[proj]) projCustomer[proj] = "";
   });
 
   // ── Build unified project list ───────────────────────────────────────────
-  const allProjects = [...new Set([
-    ...Object.keys(projBudget),
-    ...Object.keys(projActual),
-  ])];
-
+  const allProjects = [...new Set([...Object.keys(projBudget), ...Object.keys(projActual)])];
   const projMap = {};
   allProjects.forEach(proj => {
     const budget = projBudget[proj] || 0;
-    projMap[proj] = {
-      customer:  projCustomer[proj] || "",
-      budget,
-      worked:    projActual[proj] || 0,
-      hasQuote:  budget > 0,
-    };
+    projMap[proj] = { customer: projCustomer[proj] || "", budget, worked: projActual[proj] || 0, hasQuote: budget > 0 };
   });
 
   const budgeted = Object.entries(projMap).filter(([,v]) => v.hasQuote);
@@ -117,163 +206,207 @@ function buildExcel({ timesheetRows, taskRows, team, month, year, workingDays })
   const totalAvailHrs   = team.length * availHrs;
   const teamUtil        = totalAvailHrs > 0 ? totalWorkedHrs / totalAvailHrs : 0;
 
+  // ── Build workbook ───────────────────────────────────────────────────────
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Labour Reporting Tool";
+  wb.created = new Date();
+
   // ── SHEET 1: Dashboard ───────────────────────────────────────────────────
-  const dashData = [
-    [`${month} ${year} — Monthly Labour Dashboard`],
-    [],
-    ["KPI", "Value", "Formatted"],
-    ["Total Budget Hours",       fmtHrs(totalBudgetHrs),   `${fmtHrs(totalBudgetHrs)} hrs`],
-    ["Total Actual Hours",       fmtHrs(totalActualHrs),   `${fmtHrs(totalActualHrs)} hrs`],
-    ["Hours Variance",           fmtHrs(totalActualHrs - totalBudgetHrs), fmtHrsVar(totalActualHrs - totalBudgetHrs) + " hrs"],
-    ["Labour Budget (£)",        +totalBudgetGBP.toFixed(0),  fmtGBP(totalBudgetGBP)],
-    ["Actual Labour Cost (£)",   +totalActualGBP.toFixed(0),  fmtGBP(totalActualGBP)],
-    ["Labour Variance (£)",      +totalVariance.toFixed(0),   fmtVar(totalVariance)],
-    ["Overall Margin %",         +overallMarginPc.toFixed(4), fmtPct(overallMarginPc)],
-    ["Team Utilisation %",       +teamUtil.toFixed(4),        fmtPct(teamUtil)],
-    ["Total Capacity Cost (£)",  +totalCapacity.toFixed(0),   fmtGBP(totalCapacity)],
-    ["Undeployed Cost (£)",      +totalUndeployed.toFixed(0), fmtGBP(totalUndeployed)],
-    [],
-    ["PROJECT STATUS", "", "", "", "", "", "", "", "", ""],
-    ["Project","Customer","Budget Hrs","Actual Hrs","Hrs Variance","Burn %","Budget £","Actual £","Variance £","Margin %","Status"],
-    ...budgeted.map(([proj, v]) => {
-      const burn   = v.budget > 0 ? v.worked / v.budget : 0;
-      const bGBP   = v.budget * avgRate;
-      const aGBP   = v.worked * avgRate;
-      const varGBP = bGBP - aGBP;
-      const margin = bGBP > 0 ? varGBP / bGBP : 0;
-      const status = burn <= 0.95 ? "On Budget" : burn <= 1.10 ? "At Risk" : "Over Budget";
-      return [proj, v.customer,
-        fmtHrs(v.budget), fmtHrs(v.worked), fmtHrsVar(v.worked - v.budget),
-        fmtPct(burn), fmtGBP(bGBP), fmtGBP(aGBP), fmtVar(varGBP),
-        fmtPct(margin), status];
-    }),
-    [],
-    ["PROJECTS WITHOUT QUOTED BUDGET — excluded from margin calculations"],
-    ["Project","Customer","Actual Hrs"],
-    ...noBudget.map(([proj,v]) => [proj, v.customer, fmtHrs(v.worked)]),
+  const wsDash = wb.addWorksheet("Dashboard");
+  wsDash.columns = [
+    {width:44},{width:28},{width:12},{width:12},{width:13},
+    {width:10},{width:13},{width:13},{width:13},{width:11},{width:13},
   ];
 
-  const wsDash = XLSX.utils.aoa_to_sheet(dashData);
-  wsDash["!cols"] = [{ wch:44 },{ wch:28 },{ wch:12 },{ wch:12 },{ wch:13 },
-                     { wch:10 },{ wch:13 },{ wch:13 },{ wch:13 },{ wch:11 },{ wch:13 }];
-  XLSX.utils.book_append_sheet(wb, wsDash, "Dashboard");
+  xlTitleRow(wsDash, `${month} ${year} — Monthly Labour Dashboard`, 11);
+  wsDash.addRow([]);
+  xlSectionRow(wsDash, "KEY PERFORMANCE INDICATORS", 11);
+
+  const kpiRows = [
+    ["Total Budget Hours",      `${fmtHrs(totalBudgetHrs)} hrs`],
+    ["Total Actual Hours",      `${fmtHrs(totalActualHrs)} hrs`],
+    ["Hours Variance",          fmtHrsVar(totalActualHrs - totalBudgetHrs) + " hrs"],
+    ["Labour Budget",           fmtGBP(totalBudgetGBP)],
+    ["Actual Labour Cost",      fmtGBP(totalActualGBP)],
+    ["Labour Variance",         fmtVar(totalVariance)],
+    ["Overall Margin %",        fmtPct(overallMarginPc)],
+    ["Team Utilisation %",      fmtPct(teamUtil)],
+    ["Total Capacity Cost",     fmtGBP(totalCapacity)],
+    ["Undeployed Cost",         fmtGBP(totalUndeployed)],
+  ];
+  kpiRows.forEach(([label, val], i) => {
+    const row = xlDataRow(wsDash, [label, val], i);
+    row.getCell(1).font = XL.font.bodyBold;
+    row.getCell(2).alignment = XL.align.rightIndent;
+  });
+
+  wsDash.addRow([]);
+  xlSectionRow(wsDash, "PROJECT STATUS", 11);
+  xlHeaderRow(wsDash, ["Project","Customer","Budget Hrs","Actual Hrs","Hrs Variance","Burn %","Budget £","Actual £","Variance £","Margin %","Status"]);
+
+  budgeted.forEach(([proj, v], i) => {
+    const burn   = v.budget > 0 ? v.worked / v.budget : 0;
+    const bGBP   = v.budget * avgRate;
+    const aGBP   = v.worked * avgRate;
+    const varGBP = bGBP - aGBP;
+    const margin = bGBP > 0 ? varGBP / bGBP : 0;
+    const status = burn <= 0.95 ? "On Budget" : burn <= 1.10 ? "At Risk" : "Over Budget";
+    const row = xlDataRow(wsDash, [
+      proj, v.customer,
+      fmtHrs(v.budget), fmtHrs(v.worked), fmtHrsVar(v.worked - v.budget),
+      fmtPct(burn), fmtGBP(bGBP), fmtGBP(aGBP), fmtVar(varGBP), fmtPct(margin), status,
+    ], i);
+    const { fill, font } = xlStatusStyle(status);
+    row.getCell(11).fill = fill;
+    row.getCell(11).font = font;
+    row.getCell(11).alignment = XL.align.center;
+  });
+
+  wsDash.addRow([]);
+  xlSectionRow(wsDash, "PROJECTS WITHOUT QUOTED BUDGET — excluded from margin calculations", 11);
+  xlHeaderRow(wsDash, ["Project","Customer","Actual Hrs"]);
+  noBudget.forEach(([proj,v], i) => xlDataRow(wsDash, [proj, v.customer, fmtHrs(v.worked)], i));
 
   // ── SHEET 2: Project Profitability ───────────────────────────────────────
-  const projRows = [
-    [`PROJECT PROFITABILITY — ${month} ${year}`],
-    [`Avg blended rate: £${avgRate.toFixed(2)}/hr  |  Actual hours sourced from timesheet export`],
-    [],
-    ["Project","Customer","Budget Hrs","Actual Hrs","Hrs Variance",
-     "Burn %","Budget £","Actual Cost £","Variance £","Margin £","Margin %","Status"],
-    ...budgeted.map(([proj,v]) => {
-      const burn   = v.budget > 0 ? v.worked / v.budget : 0;
-      const bGBP   = v.budget * avgRate;
-      const aGBP   = v.worked * avgRate;
-      const varGBP = bGBP - aGBP;
-      const margin = bGBP > 0 ? varGBP / bGBP : 0;
-      const status = burn <= 0.95 ? "On Budget" : burn <= 1.10 ? "At Risk" : "Over Budget";
-      return [
-        proj, v.customer,
-        fmtHrs(v.budget), fmtHrs(v.worked), fmtHrsVar(v.worked - v.budget),
-        fmtPct(burn), fmtGBP(bGBP), fmtGBP(aGBP), fmtVar(varGBP),
-        fmtVar(varGBP), fmtPct(margin), status,
-      ];
-    }),
-    ["TOTAL","",
-      fmtHrs(totalBudgetHrs), fmtHrs(totalActualHrs),
-      fmtHrsVar(totalActualHrs - totalBudgetHrs),
-      fmtPct(totalBudgetHrs > 0 ? totalActualHrs / totalBudgetHrs : 0),
-      fmtGBP(totalBudgetGBP), fmtGBP(totalActualGBP),
-      fmtVar(totalVariance), fmtVar(totalVariance),
-      fmtPct(overallMarginPc), "",
-    ],
-    [],
-    ["NO QUOTED BUDGET — hours logged, excluded from margin"],
-    ["Project","Customer","Actual Hrs"],
-    ...noBudget.map(([proj,v]) => [proj, v.customer, fmtHrs(v.worked)]),
+  const wsProj = wb.addWorksheet("Project Profitability");
+  wsProj.columns = [
+    {width:44},{width:28},{width:12},{width:12},{width:13},
+    {width:10},{width:13},{width:14},{width:13},{width:13},{width:11},{width:13},
   ];
 
-  const wsProj = XLSX.utils.aoa_to_sheet(projRows);
-  wsProj["!cols"] = [{ wch:44},{wch:28},{wch:12},{wch:12},{wch:13},
-                     {wch:10},{wch:13},{wch:14},{wch:13},{wch:13},{wch:11},{wch:13}];
-  XLSX.utils.book_append_sheet(wb, wsProj, "Project Profitability");
+  xlTitleRow(wsProj, `PROJECT PROFITABILITY — ${month} ${year}`, 12);
+  const noteRow = wsProj.addRow([`Avg blended rate: £${avgRate.toFixed(2)}/hr  |  Actual hours sourced from timesheet export`]);
+  wsProj.mergeCells(`A${noteRow.number}:L${noteRow.number}`);
+  xlStyleRow(noteRow, { fill:XL.fill.subheader, font:XL.font.note, alignment:XL.align.leftIndent, height:16 });
+  wsProj.addRow([]);
+
+  xlHeaderRow(wsProj, ["Project","Customer","Budget Hrs","Actual Hrs","Hrs Variance","Burn %","Budget £","Actual Cost £","Variance £","Margin £","Margin %","Status"]);
+
+  budgeted.forEach(([proj,v], i) => {
+    const burn   = v.budget > 0 ? v.worked / v.budget : 0;
+    const bGBP   = v.budget * avgRate;
+    const aGBP   = v.worked * avgRate;
+    const varGBP = bGBP - aGBP;
+    const margin = bGBP > 0 ? varGBP / bGBP : 0;
+    const status = burn <= 0.95 ? "On Budget" : burn <= 1.10 ? "At Risk" : "Over Budget";
+    const row = xlDataRow(wsProj, [
+      proj, v.customer,
+      fmtHrs(v.budget), fmtHrs(v.worked), fmtHrsVar(v.worked - v.budget),
+      fmtPct(burn), fmtGBP(bGBP), fmtGBP(aGBP), fmtVar(varGBP),
+      fmtVar(varGBP), fmtPct(margin), status,
+    ], i);
+    const { fill, font } = xlStatusStyle(status);
+    row.getCell(12).fill = fill;
+    row.getCell(12).font = font;
+    row.getCell(12).alignment = XL.align.center;
+  });
+
+  xlTotalRow(wsProj, [
+    "TOTAL", "",
+    fmtHrs(totalBudgetHrs), fmtHrs(totalActualHrs),
+    fmtHrsVar(totalActualHrs - totalBudgetHrs),
+    fmtPct(totalBudgetHrs > 0 ? totalActualHrs / totalBudgetHrs : 0),
+    fmtGBP(totalBudgetGBP), fmtGBP(totalActualGBP),
+    fmtVar(totalVariance), fmtVar(totalVariance),
+    fmtPct(overallMarginPc), "",
+  ]);
+
+  wsProj.addRow([]);
+  xlSectionRow(wsProj, "NO QUOTED BUDGET — hours logged, excluded from margin", 12);
+  xlHeaderRow(wsProj, ["Project","Customer","Actual Hrs"]);
+  noBudget.forEach(([proj,v], i) => xlDataRow(wsProj, [proj, v.customer, fmtHrs(v.worked)], i));
 
   // ── SHEET 3: Utilisation ─────────────────────────────────────────────────
-  const teamGroups = [...new Set(team.map(t => t.team))];
-  const utilRows = [
-    [`LABOUR UTILISATION — ${month} ${year}`],
-    [`Available hours: ${workingDays} working days × 8 hrs = ${availHrs} hrs/person`],
-    [],
-    ["Team Member","Team","Hourly Rate (£)","Available Hrs","Hours Worked",
-     "Utilisation %","Capacity Cost (£)","Labour Cost (£)","Undeployed Cost (£)"],
-    ...teamGroups.flatMap(grp => {
-      const members = team.filter(t => t.team === grp);
-      const memberRows = members.map(t => {
-        const rate    = parseFloat(t.rate) || 0;
-        const worked  = personHrs[t.name] || 0;
-        const util    = availHrs > 0 ? worked / availHrs : 0;
-        const capCost = availHrs * rate;
-        const labCost = worked * rate;
-        return [
-          t.name, t.team || "", fmtGBP(rate), availHrs,
-          fmtHrs(worked), fmtPct(util),
-          fmtGBP(capCost), fmtGBP(labCost), fmtGBP(capCost - labCost),
-        ];
-      });
-      const grpWorked   = members.reduce((s,t) => s + (personHrs[t.name]||0), 0);
-      const grpCap      = members.reduce((s,t) => s + availHrs*(parseFloat(t.rate)||0), 0);
-      const grpDeployed = members.reduce((s,t) => s + (personHrs[t.name]||0)*(parseFloat(t.rate)||0), 0);
-      const grpAvail    = members.length * availHrs;
-      return [
-        ...memberRows,
-        [`— ${grp} Subtotal`, "", "", grpAvail, fmtHrs(grpWorked),
-         fmtPct(grpAvail > 0 ? grpWorked / grpAvail : 0),
-         fmtGBP(grpCap), fmtGBP(grpDeployed), fmtGBP(grpCap - grpDeployed)],
-        [],
-      ];
-    }),
-    ["TOTAL","","", totalAvailHrs, fmtHrs(totalWorkedHrs),
-      fmtPct(teamUtil), fmtGBP(totalCapacity), fmtGBP(totalDeployed), fmtGBP(totalUndeployed)],
+  const wsUtil = wb.addWorksheet("Utilisation");
+  wsUtil.columns = [
+    {width:26},{width:14},{width:15},{width:14},{width:14},
+    {width:14},{width:20},{width:20},{width:20},
   ];
 
-  const wsUtil = XLSX.utils.aoa_to_sheet(utilRows);
-  wsUtil["!cols"] = [{wch:26},{wch:14},{wch:15},{wch:14},{wch:14},
-                     {wch:14},{wch:20},{wch:20},{wch:20}];
-  XLSX.utils.book_append_sheet(wb, wsUtil, "Utilisation");
+  xlTitleRow(wsUtil, `LABOUR UTILISATION — ${month} ${year}`, 9);
+  const utilNoteRow = wsUtil.addRow([`Available hours: ${workingDays} working days × 8 hrs = ${availHrs} hrs/person`]);
+  wsUtil.mergeCells(`A${utilNoteRow.number}:I${utilNoteRow.number}`);
+  xlStyleRow(utilNoteRow, { fill:XL.fill.subheader, font:XL.font.note, alignment:XL.align.leftIndent, height:16 });
+  wsUtil.addRow([]);
+
+  xlHeaderRow(wsUtil, ["Team Member","Team","Hourly Rate (£)","Available Hrs","Hours Worked","Utilisation %","Capacity Cost (£)","Labour Cost (£)","Undeployed Cost (£)"]);
+
+  const teamGroups = [...new Set(team.map(t => t.team))];
+  teamGroups.forEach(grp => {
+    const members = team.filter(t => t.team === grp);
+    members.forEach((t, i) => {
+      const rate    = parseFloat(t.rate) || 0;
+      const worked  = personHrs[t.name] || 0;
+      const util    = availHrs > 0 ? worked / availHrs : 0;
+      const capCost = availHrs * rate;
+      const labCost = worked * rate;
+      xlDataRow(wsUtil, [
+        t.name, t.team || "", fmtGBP(rate), availHrs,
+        fmtHrs(worked), fmtPct(util),
+        fmtGBP(capCost), fmtGBP(labCost), fmtGBP(capCost - labCost),
+      ], i);
+    });
+    const grpWorked   = members.reduce((s,t) => s + (personHrs[t.name]||0), 0);
+    const grpCap      = members.reduce((s,t) => s + availHrs*(parseFloat(t.rate)||0), 0);
+    const grpDeployed = members.reduce((s,t) => s + (personHrs[t.name]||0)*(parseFloat(t.rate)||0), 0);
+    const grpAvail    = members.length * availHrs;
+    xlSubtotalRow(wsUtil, [
+      `— ${grp} Subtotal`, "", "", grpAvail, fmtHrs(grpWorked),
+      fmtPct(grpAvail > 0 ? grpWorked / grpAvail : 0),
+      fmtGBP(grpCap), fmtGBP(grpDeployed), fmtGBP(grpCap - grpDeployed),
+    ]);
+    wsUtil.addRow([]);
+  });
+
+  xlTotalRow(wsUtil, [
+    "TOTAL", "", "", totalAvailHrs, fmtHrs(totalWorkedHrs),
+    fmtPct(teamUtil), fmtGBP(totalCapacity), fmtGBP(totalDeployed), fmtGBP(totalUndeployed),
+  ]);
 
   // ── SHEET 4: Raw Timesheet ───────────────────────────────────────────────
-  const tsHeaders = ["Job No.","Task","Project","Team Member","Date","Hours","Billable","Notes"];
-  const tsData = timesheetRows.map(r => [
-    r.work_order_no || "",
-    r.task_name || "",
-    (r.project_description || "").trim(),
-    r.user_name || "",
-    (r.start_datetime || "").slice(0,10),
-    parseFloat(r.hours) || 0,
-    r.is_billable === "1" ? "Yes" : "No",
-    r.notes || "",
-  ]);
-  const wsTs = XLSX.utils.aoa_to_sheet([tsHeaders, ...tsData]);
-  wsTs["!cols"] = [{wch:12},{wch:30},{wch:42},{wch:22},{wch:12},{wch:8},{wch:9},{wch:30}];
-  XLSX.utils.book_append_sheet(wb, wsTs, "Raw Timesheet");
+  const wsTs = wb.addWorksheet("Raw Timesheet");
+  wsTs.columns = [
+    {width:12},{width:30},{width:42},{width:22},{width:12},{width:8},{width:9},{width:30},
+  ];
+
+  xlHeaderRow(wsTs, ["Job No.","Task","Project","Team Member","Date","Hours","Billable","Notes"]);
+  timesheetRows.forEach((r, i) => {
+    xlDataRow(wsTs, [
+      r.work_order_no || "",
+      r.task_name || "",
+      (r.project_description || "").trim(),
+      r.user_name || "",
+      (r.start_datetime || "").slice(0,10),
+      parseFloat(r.hours) || 0,
+      r.is_billable === "1" ? "Yes" : "No",
+      r.notes || "",
+    ], i);
+  });
 
   // ── SHEET 5: Settings snapshot ───────────────────────────────────────────
-  const settingsData = [
-    ["REPORT SETTINGS SNAPSHOT"],
+  const wsSet = wb.addWorksheet("Settings");
+  wsSet.columns = [{width:26},{width:22},{width:22}];
+
+  xlTitleRow(wsSet, "REPORT SETTINGS SNAPSHOT", 3);
+  const settingsKV = [
     ["Report Month",         month],
-    ["Report Year",          year],
-    ["Working Days",         workingDays],
-    ["Hrs per Day",          8],
-    ["Available Hrs/Person", availHrs],
+    ["Report Year",          String(year)],
+    ["Working Days",         String(workingDays)],
+    ["Hrs per Day",          "8"],
+    ["Available Hrs/Person", String(availHrs)],
     ["Avg Hourly Rate",      fmtGBP(avgRate) + "/hr"],
-    [],
-    ["TEAM RATES"],
-    ["Name","Team","Hourly Rate (£)"],
-    ...team.map(t => [t.name, t.team || "", fmtGBP(parseFloat(t.rate)||0) + "/hr"]),
   ];
-  const wsSet = XLSX.utils.aoa_to_sheet(settingsData);
-  wsSet["!cols"] = [{wch:26},{wch:14},{wch:22}];
-  XLSX.utils.book_append_sheet(wb, wsSet, "Settings");
+  settingsKV.forEach(([k,v], i) => {
+    const row = xlDataRow(wsSet, [k, v], i);
+    row.getCell(1).font = XL.font.bodyBold;
+  });
+
+  wsSet.addRow([]);
+  xlSectionRow(wsSet, "TEAM RATES", 3);
+  xlHeaderRow(wsSet, ["Name","Team","Hourly Rate (£)"]);
+  team.forEach((t, i) => {
+    xlDataRow(wsSet, [t.name, t.team || "", fmtGBP(parseFloat(t.rate)||0) + "/hr"], i);
+  });
 
   return wb;
 }
@@ -380,7 +513,16 @@ export default function App() {
       const wb = buildExcel({ timesheetRows, taskRows, team, month, year, workingDays });
 
       const filename = `Labour_Report_${month}_${year}.xlsx`;
-      XLSX.writeFile(wb, filename);
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
 
       setStatus("done");
     } catch (e) {
