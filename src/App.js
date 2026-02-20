@@ -355,7 +355,7 @@ function buildExcel({ timesheetRows, taskRows, team, startMonth, startYear, endM
   ];
 
   xlTitleRow(wsUtil, `LABOUR UTILISATION — ${rangeLabel}`, 9);
-  const utilNoteRow = wsUtil.addRow([`Available hours: ${workingDays} working days × 8 hrs = ${availHrs} hrs/person`]);
+  const utilNoteRow = wsUtil.addRow([`Available hours: ${workingDays} total working days × 8 hrs = ${availHrs} hrs/person`]);
   wsUtil.mergeCells(`A${utilNoteRow.number}:I${utilNoteRow.number}`);
   xlStyleRow(utilNoteRow, { fill:XL.fill.subheader, font:XL.font.note, alignment:XL.align.leftIndent, height:16 });
   wsUtil.addRow([]);
@@ -422,7 +422,7 @@ function buildExcel({ timesheetRows, taskRows, team, startMonth, startYear, endM
   const settingsKV = [
     ["Report Start",         `${startMonth} ${startYear}`],
     ["Report End",           `${endMonth} ${endYear}`],
-    ["Working Days",         String(workingDays)],
+    ["Total Working Days",   String(workingDays)],
     ["Hrs per Day",          "8"],
     ["Available Hrs/Person", String(availHrs)],
     ["Avg Hourly Rate",      fmtGBP(avgRate) + "/hr"],
@@ -484,6 +484,21 @@ function DropZone({ label, sublabel, accept, onFile, file, icon }) {
   );
 }
 
+// ─── Month range helper ────────────────────────────────────────────────────
+function getMonthRange(startMonth, startYear, endMonth, endYear) {
+  const result = [];
+  let m = MONTHS.indexOf(startMonth);
+  let y = parseInt(startYear);
+  const endM = MONTHS.indexOf(endMonth);
+  const endY = parseInt(endYear);
+  while (y < endY || (y === endY && m <= endM)) {
+    result.push({ month: MONTHS[m], year: y });
+    m++;
+    if (m > 11) { m = 0; y++; }
+  }
+  return result;
+}
+
 // ─── Main App ──────────────────────────────────────────────────────────────
 export default function App() {
   const [timesheetFile, setTimesheetFile] = useState(null);
@@ -493,7 +508,7 @@ export default function App() {
   const [startYear,     setStartYear]     = useState(2026);
   const [endMonth,      setEndMonth]      = useState("February");
   const [endYear,       setEndYear]       = useState(2026);
-  const [workingDays,   setWorkingDays]   = useState(20);
+  const [monthlyWorkingDays, setMonthlyWorkingDays] = useState({});
   const [status,        setStatus]        = useState("idle");
   const [errorMsg,      setErrorMsg]      = useState("");
   const [preview,       setPreview]       = useState(null);
@@ -551,6 +566,19 @@ export default function App() {
     };
   }, [parsedTimesheetRows, startMonth, startYear, endMonth, endYear, selectedProject]);
 
+  const monthRange = useMemo(
+    () => getMonthRange(startMonth, startYear, endMonth, endYear),
+    [startMonth, startYear, endMonth, endYear]
+  );
+
+  const totalWorkingDays = useMemo(
+    () => monthRange.reduce((sum, { month, year }) => {
+      const key = `${month} ${year}`;
+      return sum + (parseInt(monthlyWorkingDays[key]) || 20);
+    }, 0),
+    [monthRange, monthlyWorkingDays]
+  );
+
   const handleGenerate = async () => {
     if (!timesheetFile || !taskFile) return;
     setStatus("parsing");
@@ -602,7 +630,7 @@ export default function App() {
         taskRows:      filteredTaskRows,
         team,
         startMonth, startYear, endMonth, endYear,
-        workingDays,
+        workingDays: totalWorkingDays,
       });
 
       const projectLabel = selectedProject !== "All Projects"
@@ -817,68 +845,104 @@ export default function App() {
         {/* Step 2 – Period */}
         <div className="card">
           <div className="section-label">Step 2 — Report Period</div>
-          <div style={{ display:"flex", gap:20, flexWrap:"wrap", alignItems:"flex-end" }}>
+          <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
 
-            {/* FROM */}
-            <div>
-              <div style={{ fontSize:11, color:"#6366f1", fontFamily:"'DM Mono',monospace",
-                            letterSpacing:1, marginBottom:8 }}>FROM</div>
-              <div style={{ display:"flex", gap:10, alignItems:"flex-end" }}>
-                <div>
-                  <div style={{ fontSize:12, color:"#64748b", marginBottom:6, fontFamily:"'DM Mono',monospace" }}>MONTH</div>
-                  <select className="field" value={startMonth} onChange={e => setStartMonth(e.target.value)}>
-                    {MONTHS.map(m => <option key={m}>{m}</option>)}
-                  </select>
+            {/* Date range row */}
+            <div style={{ display:"flex", gap:20, flexWrap:"wrap", alignItems:"flex-end" }}>
+
+              {/* FROM */}
+              <div>
+                <div style={{ fontSize:11, color:"#6366f1", fontFamily:"'DM Mono',monospace",
+                              letterSpacing:1, marginBottom:8 }}>FROM</div>
+                <div style={{ display:"flex", gap:10, alignItems:"flex-end" }}>
+                  <div>
+                    <div style={{ fontSize:12, color:"#64748b", marginBottom:6, fontFamily:"'DM Mono',monospace" }}>MONTH</div>
+                    <select className="field" value={startMonth} onChange={e => setStartMonth(e.target.value)}>
+                      {MONTHS.map(m => <option key={m}>{m}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={{ fontSize:12, color:"#64748b", marginBottom:6, fontFamily:"'DM Mono',monospace" }}>YEAR</div>
+                    <input className="field" type="number" value={startYear}
+                      onChange={e => setStartYear(parseInt(e.target.value)||2026)} min={2020} max={2035} />
+                  </div>
                 </div>
-                <div>
-                  <div style={{ fontSize:12, color:"#64748b", marginBottom:6, fontFamily:"'DM Mono',monospace" }}>YEAR</div>
-                  <input className="field" type="number" value={startYear}
-                    onChange={e => setStartYear(parseInt(e.target.value)||2026)} min={2020} max={2035} />
+              </div>
+
+              {/* Arrow */}
+              <div style={{ color:"#334155", fontSize:20, paddingBottom:10 }}>→</div>
+
+              {/* TO */}
+              <div>
+                <div style={{ fontSize:11, color:"#6366f1", fontFamily:"'DM Mono',monospace",
+                              letterSpacing:1, marginBottom:8 }}>TO</div>
+                <div style={{ display:"flex", gap:10, alignItems:"flex-end" }}>
+                  <div>
+                    <div style={{ fontSize:12, color:"#64748b", marginBottom:6, fontFamily:"'DM Mono',monospace" }}>MONTH</div>
+                    <select className="field" value={endMonth} onChange={e => setEndMonth(e.target.value)}>
+                      {MONTHS.map(m => <option key={m}>{m}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={{ fontSize:12, color:"#64748b", marginBottom:6, fontFamily:"'DM Mono',monospace" }}>YEAR</div>
+                    <input className="field" type="number" value={endYear}
+                      onChange={e => setEndYear(parseInt(e.target.value)||2026)} min={2020} max={2035} />
+                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Arrow */}
-            <div style={{ color:"#334155", fontSize:20, paddingBottom:10 }}>→</div>
-
-            {/* TO */}
-            <div>
-              <div style={{ fontSize:11, color:"#6366f1", fontFamily:"'DM Mono',monospace",
-                            letterSpacing:1, marginBottom:8 }}>TO</div>
-              <div style={{ display:"flex", gap:10, alignItems:"flex-end" }}>
-                <div>
-                  <div style={{ fontSize:12, color:"#64748b", marginBottom:6, fontFamily:"'DM Mono',monospace" }}>MONTH</div>
-                  <select className="field" value={endMonth} onChange={e => setEndMonth(e.target.value)}>
-                    {MONTHS.map(m => <option key={m}>{m}</option>)}
-                  </select>
+            {/* Per-month working days grid */}
+            {monthRange.length > 0 && (
+              <div>
+                <div style={{ fontSize:12, color:"#64748b", marginBottom:8, fontFamily:"'DM Mono',monospace" }}>
+                  WORKING DAYS PER MONTH
                 </div>
-                <div>
-                  <div style={{ fontSize:12, color:"#64748b", marginBottom:6, fontFamily:"'DM Mono',monospace" }}>YEAR</div>
-                  <input className="field" type="number" value={endYear}
-                    onChange={e => setEndYear(parseInt(e.target.value)||2026)} min={2020} max={2035} />
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(110px, 1fr))", gap:8 }}>
+                  {monthRange.map(({ month, year }) => {
+                    const key = `${month} ${year}`;
+                    const val = monthlyWorkingDays[key] !== undefined ? monthlyWorkingDays[key] : 20;
+                    return (
+                      <div key={key} style={{
+                        background:"rgba(255,255,255,0.03)", border:"1px solid #1e293b",
+                        borderRadius:8, padding:"8px 10px",
+                      }}>
+                        <div style={{ fontSize:10, color:"#6366f1", fontFamily:"'DM Mono',monospace", marginBottom:6 }}>
+                          {month.slice(0,3).toUpperCase()} {year}
+                        </div>
+                        <input
+                          className="field"
+                          type="number"
+                          value={val}
+                          onChange={e => setMonthlyWorkingDays(prev => ({
+                            ...prev, [key]: parseInt(e.target.value) || 20,
+                          }))}
+                          min={1} max={31}
+                          style={{ width:"100%" }}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-            </div>
-
-            {/* Working Days */}
-            <div>
-              <div style={{ fontSize:12, color:"#64748b", marginBottom:6, fontFamily:"'DM Mono',monospace" }}>WORKING DAYS</div>
-              <input className="field" type="number" value={workingDays}
-                onChange={e => setWorkingDays(parseInt(e.target.value)||20)} min={1} max={31} />
-            </div>
+            )}
 
             {/* Available hrs info */}
-            <div style={{ flex:1, minWidth:180, background:"rgba(99,102,241,0.06)",
+            <div style={{ alignSelf:"flex-start", background:"rgba(99,102,241,0.06)",
                           border:"1px solid rgba(99,102,241,0.15)", borderRadius:10,
                           padding:"12px 16px" }}>
               <div style={{ fontSize:11, color:"#6366f1", fontFamily:"'DM Mono',monospace", marginBottom:4 }}>
                 AVAILABLE HRS / PERSON
               </div>
               <div style={{ fontSize:22, fontFamily:"'DM Serif Display',serif", color:"#a5b4fc" }}>
-                {workingDays * 8}
+                {totalWorkingDays * 8}
                 <span style={{ fontSize:13, color:"#64748b", marginLeft:6 }}>hrs</span>
               </div>
+              <div style={{ fontSize:11, color:"#475569", fontFamily:"'DM Mono',monospace", marginTop:4 }}>
+                {totalWorkingDays} days across {monthRange.length} {monthRange.length === 1 ? "month" : "months"}
+              </div>
             </div>
+
           </div>
         </div>
 
