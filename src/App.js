@@ -566,6 +566,16 @@ export default function App() {
     };
   }, [parsedTimesheetRows, startMonth, startYear, endMonth, endYear, selectedProject]);
 
+  // Names present in the timesheet CSV but absent from the team roster
+  const unmatchedUsers = useMemo(() => {
+    if (!parsedTimesheetRows.length) return [];
+    const teamNames = new Set(team.map(t => t.name.trim()));
+    const csvNames = [...new Set(
+      parsedTimesheetRows.map(r => (r.user_name || "").trim()).filter(Boolean)
+    )];
+    return csvNames.filter(n => !teamNames.has(n));
+  }, [parsedTimesheetRows, team]);
+
   const monthRange = useMemo(
     () => getMonthRange(startMonth, startYear, endMonth, endYear),
     [startMonth, startYear, endMonth, endYear]
@@ -1029,6 +1039,21 @@ export default function App() {
 
         {/* Generate */}
         <div style={{ textAlign:"center", padding:"8px 0 4px" }}>
+          {unmatchedUsers.length > 0 && (
+            <div style={{ background:"rgba(234,179,8,0.08)", border:"1px solid rgba(234,179,8,0.3)",
+                          borderRadius:10, padding:"12px 20px", marginBottom:16,
+                          color:"#fde68a", fontSize:13, fontFamily:"'DM Mono',monospace",
+                          textAlign:"left" }}>
+              <div style={{ marginBottom:6 }}>
+                ⚠ The following names appear in the timesheet CSV but are not in the team list.
+                Their hours will be included in the report, but their rate will default to the blended average.
+              </div>
+              <ul style={{ margin:0, paddingLeft:20, lineHeight:"1.8" }}>
+                {unmatchedUsers.map(n => <li key={n}>{n}</li>)}
+              </ul>
+            </div>
+          )}
+
           {status === "error" && (
             <div style={{ background:"rgba(239,68,68,0.1)", border:"1px solid rgba(239,68,68,0.25)",
                           borderRadius:10, padding:"12px 20px", marginBottom:16,
