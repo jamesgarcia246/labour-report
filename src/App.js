@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import ExcelJS from "exceljs";
 
 // ─── Palette & constants ───────────────────────────────────────────────────
@@ -39,6 +39,35 @@ function fmtPct(n)  { return `${(n * 100).toFixed(1)}%` }
 function fmtHrs(n)  { return +n.toFixed(1) }
 function fmtVar(n)  { return n >= 0 ? `+${fmtGBP(n)}` : `-£${Math.abs(Math.round(n)).toLocaleString("en-GB")}` }
 function fmtHrsVar(n){ return n >= 0 ? `+${n.toFixed(1)}` : n.toFixed(1) }
+
+// ─── CSV / file helpers (outside component for stable refs) ──────────────
+function parseCSV(text) {
+  const lines = text.trim().split("\n");
+  const headers = lines[0].split(",").map(h => h.replace(/"/g,"").trim());
+  return lines.slice(1).map(line => {
+    const vals = [];
+    let cur = "", inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { inQ = !inQ; continue; }
+      if (ch === "," && !inQ) { vals.push(cur.trim()); cur = ""; continue; }
+      cur += ch;
+    }
+    vals.push(cur.trim());
+    const obj = {};
+    headers.forEach((h,i) => { obj[h] = vals[i] || ""; });
+    return obj;
+  });
+}
+
+function readFile(file) {
+  return new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = e => res(e.target.result);
+    reader.onerror = rej;
+    reader.readAsText(file);
+  });
+}
 
 // ─── Excel style constants ────────────────────────────────────────────────
 const XL = {
@@ -152,10 +181,12 @@ function xlCol(n) {
 }
 
 // ─── Excel generation ──────────────────────────────────────────────────────
-function buildExcel({ timesheetRows, taskRows, team, month, year, workingDays }) {
+function buildExcel({ timesheetRows, taskRows, team, startMonth, startYear, endMonth, endYear, workingDays }) {
   const rateMap = {};
   team.forEach(t => { rateMap[t.name] = parseFloat(t.rate) || 0; });
   const avgRate = team.reduce((s,t) => s + (parseFloat(t.rate)||0), 0) / team.length;
+
+  const rangeLabel = `${startMonth} ${startYear} — ${endMonth} ${endYear}`;
 
   // ── Build project map from task-list (budgets only) ──────────────────────
   const projBudget = {};
@@ -218,7 +249,7 @@ function buildExcel({ timesheetRows, taskRows, team, month, year, workingDays })
     {width:10},{width:13},{width:13},{width:13},{width:11},{width:13},
   ];
 
-  xlTitleRow(wsDash, `${month} ${year} — Monthly Labour Dashboard`, 11);
+  xlTitleRow(wsDash, `${rangeLabel} — Labour Dashboard`, 11);
   wsDash.addRow([]);
   xlSectionRow(wsDash, "KEY PERFORMANCE INDICATORS", 11);
 
@@ -274,7 +305,7 @@ function buildExcel({ timesheetRows, taskRows, team, month, year, workingDays })
     {width:10},{width:13},{width:14},{width:13},{width:13},{width:11},{width:13},
   ];
 
-  xlTitleRow(wsProj, `PROJECT PROFITABILITY — ${month} ${year}`, 12);
+  xlTitleRow(wsProj, `PROJECT PROFITABILITY — ${rangeLabel}`, 12);
   const noteRow = wsProj.addRow([`Avg blended rate: £${avgRate.toFixed(2)}/hr  |  Actual hours sourced from timesheet export`]);
   wsProj.mergeCells(`A${noteRow.number}:L${noteRow.number}`);
   xlStyleRow(noteRow, { fill:XL.fill.subheader, font:XL.font.note, alignment:XL.align.leftIndent, height:16 });
@@ -323,7 +354,7 @@ function buildExcel({ timesheetRows, taskRows, team, month, year, workingDays })
     {width:14},{width:20},{width:20},{width:20},
   ];
 
-  xlTitleRow(wsUtil, `LABOUR UTILISATION — ${month} ${year}`, 9);
+  xlTitleRow(wsUtil, `LABOUR UTILISATION — ${rangeLabel}`, 9);
   const utilNoteRow = wsUtil.addRow([`Available hours: ${workingDays} working days × 8 hrs = ${availHrs} hrs/person`]);
   wsUtil.mergeCells(`A${utilNoteRow.number}:I${utilNoteRow.number}`);
   xlStyleRow(utilNoteRow, { fill:XL.fill.subheader, font:XL.font.note, alignment:XL.align.leftIndent, height:16 });
@@ -389,8 +420,8 @@ function buildExcel({ timesheetRows, taskRows, team, month, year, workingDays })
 
   xlTitleRow(wsSet, "REPORT SETTINGS SNAPSHOT", 3);
   const settingsKV = [
-    ["Report Month",         month],
-    ["Report Year",          String(year)],
+    ["Report Start",         `${startMonth} ${startYear}`],
+    ["Report End",           `${endMonth} ${endYear}`],
     ["Working Days",         String(workingDays)],
     ["Hrs per Day",          "8"],
     ["Available Hrs/Person", String(availHrs)],
@@ -458,61 +489,127 @@ export default function App() {
   const [timesheetFile, setTimesheetFile] = useState(null);
   const [taskFile,      setTaskFile]      = useState(null);
   const [team,          setTeam]          = useState(TEAM_DEFAULT);
-  const [month,         setMonth]         = useState("February");
-  const [year,          setYear]          = useState(2026);
+  const [startMonth,    setStartMonth]    = useState("February");
+  const [startYear,     setStartYear]     = useState(2026);
+  const [endMonth,      setEndMonth]      = useState("February");
+  const [endYear,       setEndYear]       = useState(2026);
   const [workingDays,   setWorkingDays]   = useState(20);
   const [status,        setStatus]        = useState("idle");
   const [errorMsg,      setErrorMsg]      = useState("");
   const [preview,       setPreview]       = useState(null);
 
-  const parseCSV = (text) => {
-    const lines = text.trim().split("\n");
-    const headers = lines[0].split(",").map(h => h.replace(/"/g,"").trim());
-    return lines.slice(1).map(line => {
-      const vals = [];
-      let cur = "", inQ = false;
-      for (let i = 0; i < line.length; i++) {
-        const ch = line[i];
-        if (ch === '"') { inQ = !inQ; continue; }
-        if (ch === "," && !inQ) { vals.push(cur.trim()); cur = ""; continue; }
-        cur += ch;
-      }
-      vals.push(cur.trim());
-      const obj = {};
-      headers.forEach((h,i) => { obj[h] = vals[i] || ""; });
-      return obj;
-    });
-  };
+  const [parsedTimesheetRows, setParsedTimesheetRows] = useState([]);
+  const [parsedTaskRows,      setParsedTaskRows]      = useState([]);
+  const [selectedProject,     setSelectedProject]     = useState("All Projects");
 
-  const readFile = (file) => new Promise((res, rej) => {
-    const reader = new FileReader();
-    reader.onload = e => res(e.target.result);
-    reader.onerror = rej;
-    reader.readAsText(file);
-  });
+  // Parse timesheet CSV reactively whenever the file changes
+  useEffect(() => {
+    if (!timesheetFile) { setParsedTimesheetRows([]); return; }
+    let cancelled = false;
+    readFile(timesheetFile).then(text => {
+      if (!cancelled) setParsedTimesheetRows(parseCSV(text));
+    });
+    return () => { cancelled = true; };
+  }, [timesheetFile]);
+
+  // Parse task CSV reactively; reset project selection when file changes
+  useEffect(() => {
+    if (!taskFile) { setParsedTaskRows([]); setSelectedProject("All Projects"); return; }
+    let cancelled = false;
+    readFile(taskFile).then(text => {
+      if (!cancelled) {
+        setParsedTaskRows(parseCSV(text));
+        setSelectedProject("All Projects");
+      }
+    });
+    return () => { cancelled = true; };
+  }, [taskFile]);
+
+  // Unique project names from the task list CSV
+  const uniqueProjects = useMemo(() =>
+    [...new Set(parsedTaskRows.map(r => (r.project || "").trim()).filter(Boolean))].sort(),
+    [parsedTaskRows]
+  );
+
+  // Live summary for the project filter panel
+  const filteredSummary = useMemo(() => {
+    if (!parsedTimesheetRows.length) return { hrs: 0, count: 0 };
+    const sDate = new Date(startYear, MONTHS.indexOf(startMonth), 1);
+    const eDate = new Date(endYear, MONTHS.indexOf(endMonth) + 1, 0);
+    let rows = parsedTimesheetRows.filter(r => {
+      const dateStr = (r.start_datetime || "").slice(0, 10);
+      if (!dateStr) return false;
+      const d = new Date(dateStr + "T00:00:00");
+      return d >= sDate && d <= eDate;
+    });
+    if (selectedProject !== "All Projects") {
+      rows = rows.filter(r => (r.project_description || "").trim() === selectedProject);
+    }
+    return {
+      hrs:   rows.reduce((s, r) => s + (parseFloat(r.hours) || 0), 0),
+      count: rows.length,
+    };
+  }, [parsedTimesheetRows, startMonth, startYear, endMonth, endYear, selectedProject]);
 
   const handleGenerate = async () => {
     if (!timesheetFile || !taskFile) return;
     setStatus("parsing");
     setErrorMsg("");
     try {
-      const [tsText, taskText] = await Promise.all([
-        readFile(timesheetFile),
-        readFile(taskFile),
-      ]);
-      const timesheetRows = parseCSV(tsText);
-      const taskRows      = parseCSV(taskText);
+      // Use pre-parsed rows from state; fall back to re-parsing if not ready yet
+      let allTimesheetRows = parsedTimesheetRows;
+      let allTaskRows      = parsedTaskRows;
+      if (!allTimesheetRows.length || !allTaskRows.length) {
+        const [tsText, taskText] = await Promise.all([
+          readFile(timesheetFile),
+          readFile(taskFile),
+        ]);
+        allTimesheetRows = parseCSV(tsText);
+        allTaskRows      = parseCSV(taskText);
+      }
+
+      // Filter by date range (inclusive)
+      const sDate = new Date(startYear, MONTHS.indexOf(startMonth), 1);
+      const eDate = new Date(endYear, MONTHS.indexOf(endMonth) + 1, 0);
+      let filteredTimesheetRows = allTimesheetRows.filter(r => {
+        const dateStr = (r.start_datetime || "").slice(0, 10);
+        if (!dateStr) return false;
+        const d = new Date(dateStr + "T00:00:00");
+        return d >= sDate && d <= eDate;
+      });
+
+      // Filter by project
+      let filteredTaskRows = allTaskRows;
+      if (selectedProject !== "All Projects") {
+        filteredTimesheetRows = filteredTimesheetRows.filter(r =>
+          (r.project_description || "").trim() === selectedProject
+        );
+        filteredTaskRows = allTaskRows.filter(r =>
+          (r.project || "").trim() === selectedProject
+        );
+      }
 
       setStatus("generating");
+
       // Build preview summary
-      const projCount = new Set(taskRows.map(r => (r.project||"").trim()).filter(Boolean)).size;
-      const peopleCount = new Set(timesheetRows.map(r => r.user_name).filter(Boolean)).size;
-      const totalHrs = timesheetRows.reduce((s,r) => s + (parseFloat(r.hours)||0), 0);
+      const projCount   = new Set(filteredTaskRows.map(r => (r.project||"").trim()).filter(Boolean)).size;
+      const peopleCount = new Set(filteredTimesheetRows.map(r => r.user_name).filter(Boolean)).size;
+      const totalHrs    = filteredTimesheetRows.reduce((s,r) => s + (parseFloat(r.hours)||0), 0);
       setPreview({ projCount, peopleCount, totalHrs: totalHrs.toFixed(1) });
 
-      const wb = buildExcel({ timesheetRows, taskRows, team, month, year, workingDays });
+      const wb = buildExcel({
+        timesheetRows: filteredTimesheetRows,
+        taskRows:      filteredTaskRows,
+        team,
+        startMonth, startYear, endMonth, endYear,
+        workingDays,
+      });
 
-      const filename = `Labour_Report_${month}_${year}.xlsx`;
+      const projectLabel = selectedProject !== "All Projects"
+        ? `${selectedProject.replace(/[^a-zA-Z0-9]/g, "_")}_`
+        : "";
+      const filename = `Labour_Report_${projectLabel}${startMonth}${startYear}_to_${endMonth}${endYear}.xlsx`;
+
       const buffer = await wb.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const url = URL.createObjectURL(blob);
@@ -536,6 +633,11 @@ export default function App() {
   };
 
   const ready = timesheetFile && taskFile;
+
+  const projectLabel = selectedProject !== "All Projects"
+    ? `${selectedProject.replace(/[^a-zA-Z0-9]/g, "_")}_`
+    : "";
+  const currentFilename = `Labour_Report_${projectLabel}${startMonth}${startYear}_to_${endMonth}${endYear}.xlsx`;
 
   return (
     <div style={{
@@ -715,24 +817,58 @@ export default function App() {
         {/* Step 2 – Period */}
         <div className="card">
           <div className="section-label">Step 2 — Report Period</div>
-          <div style={{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"center" }}>
+          <div style={{ display:"flex", gap:20, flexWrap:"wrap", alignItems:"flex-end" }}>
+
+            {/* FROM */}
             <div>
-              <div style={{ fontSize:12, color:"#64748b", marginBottom:6, fontFamily:"'DM Mono',monospace" }}>MONTH</div>
-              <select className="field" value={month} onChange={e => setMonth(e.target.value)}>
-                {MONTHS.map(m => <option key={m}>{m}</option>)}
-              </select>
+              <div style={{ fontSize:11, color:"#6366f1", fontFamily:"'DM Mono',monospace",
+                            letterSpacing:1, marginBottom:8 }}>FROM</div>
+              <div style={{ display:"flex", gap:10, alignItems:"flex-end" }}>
+                <div>
+                  <div style={{ fontSize:12, color:"#64748b", marginBottom:6, fontFamily:"'DM Mono',monospace" }}>MONTH</div>
+                  <select className="field" value={startMonth} onChange={e => setStartMonth(e.target.value)}>
+                    {MONTHS.map(m => <option key={m}>{m}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div style={{ fontSize:12, color:"#64748b", marginBottom:6, fontFamily:"'DM Mono',monospace" }}>YEAR</div>
+                  <input className="field" type="number" value={startYear}
+                    onChange={e => setStartYear(parseInt(e.target.value)||2026)} min={2020} max={2035} />
+                </div>
+              </div>
             </div>
+
+            {/* Arrow */}
+            <div style={{ color:"#334155", fontSize:20, paddingBottom:10 }}>→</div>
+
+            {/* TO */}
             <div>
-              <div style={{ fontSize:12, color:"#64748b", marginBottom:6, fontFamily:"'DM Mono',monospace" }}>YEAR</div>
-              <input className="field" type="number" value={year}
-                onChange={e => setYear(parseInt(e.target.value)||2026)} min={2020} max={2035} />
+              <div style={{ fontSize:11, color:"#6366f1", fontFamily:"'DM Mono',monospace",
+                            letterSpacing:1, marginBottom:8 }}>TO</div>
+              <div style={{ display:"flex", gap:10, alignItems:"flex-end" }}>
+                <div>
+                  <div style={{ fontSize:12, color:"#64748b", marginBottom:6, fontFamily:"'DM Mono',monospace" }}>MONTH</div>
+                  <select className="field" value={endMonth} onChange={e => setEndMonth(e.target.value)}>
+                    {MONTHS.map(m => <option key={m}>{m}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div style={{ fontSize:12, color:"#64748b", marginBottom:6, fontFamily:"'DM Mono',monospace" }}>YEAR</div>
+                  <input className="field" type="number" value={endYear}
+                    onChange={e => setEndYear(parseInt(e.target.value)||2026)} min={2020} max={2035} />
+                </div>
+              </div>
             </div>
+
+            {/* Working Days */}
             <div>
               <div style={{ fontSize:12, color:"#64748b", marginBottom:6, fontFamily:"'DM Mono',monospace" }}>WORKING DAYS</div>
               <input className="field" type="number" value={workingDays}
                 onChange={e => setWorkingDays(parseInt(e.target.value)||20)} min={1} max={31} />
             </div>
-            <div style={{ flex:1, minWidth:200, background:"rgba(99,102,241,0.06)",
+
+            {/* Available hrs info */}
+            <div style={{ flex:1, minWidth:180, background:"rgba(99,102,241,0.06)",
                           border:"1px solid rgba(99,102,241,0.15)", borderRadius:10,
                           padding:"12px 16px" }}>
               <div style={{ fontSize:11, color:"#6366f1", fontFamily:"'DM Mono',monospace", marginBottom:4 }}>
@@ -745,6 +881,38 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        {/* Project Filter – only visible when both CSVs are uploaded */}
+        {ready && (
+          <div className="card">
+            <div className="section-label">Project Filter — Optional</div>
+            <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+              <div>
+                <div style={{ fontSize:12, color:"#64748b", marginBottom:6, fontFamily:"'DM Mono',monospace" }}>
+                  PROJECT
+                </div>
+                <select
+                  className="field"
+                  value={selectedProject}
+                  onChange={e => setSelectedProject(e.target.value)}
+                >
+                  <option value="All Projects">All Projects</option>
+                  {uniqueProjects.map(p => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ fontSize:12, color:"#475569", fontFamily:"'DM Mono',monospace" }}>
+                {filteredSummary.hrs.toFixed(1)} hrs
+                &nbsp;·&nbsp;
+                {filteredSummary.count} {filteredSummary.count === 1 ? "entry" : "entries"}
+                {selectedProject !== "All Projects" && (
+                  <span style={{ color:"#6366f1" }}> — filtered to {selectedProject}</span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Step 3 – Team rates */}
         <div className="card">
@@ -840,7 +1008,7 @@ export default function App() {
 
           {status === "done" && (
             <div style={{ marginTop:12, fontSize:12, color:"#10b981", fontFamily:"'DM Mono',monospace" }}>
-              Labour_Report_{month}_{year}.xlsx — saved to your downloads
+              {currentFilename} — saved to your downloads
             </div>
           )}
         </div>
