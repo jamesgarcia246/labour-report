@@ -589,6 +589,21 @@ export default function App() {
     [monthRange, monthlyWorkingDays]
   );
 
+  // Names who have logged time against the selected project (within the date range).
+  // null when "All Projects" is selected — used to filter the Step 3 roster display.
+  const projectActiveUsers = useMemo(() => {
+    if (selectedProject === "All Projects" || !parsedTimesheetRows.length) return null;
+    const sDate = new Date(startYear, MONTHS.indexOf(startMonth), 1);
+    const eDate = new Date(endYear, MONTHS.indexOf(endMonth) + 1, 0);
+    const rows = parsedTimesheetRows.filter(r => {
+      const dateStr = (r.start_datetime || "").slice(0, 10);
+      if (!dateStr) return false;
+      const d = new Date(dateStr + "T00:00:00");
+      return d >= sDate && d <= eDate && (r.project_description || "").trim() === selectedProject;
+    });
+    return new Set(rows.map(r => (r.user_name || "").trim()).filter(Boolean));
+  }, [parsedTimesheetRows, selectedProject, startMonth, startYear, endMonth, endYear]);
+
   const handleGenerate = async () => {
     if (!timesheetFile || !taskFile) return;
     setStatus("parsing");
@@ -633,7 +648,17 @@ export default function App() {
       const projCount   = new Set(filteredTaskRows.map(r => (r.project||"").trim()).filter(Boolean)).size;
       const peopleCount = new Set(filteredTimesheetRows.map(r => r.user_name).filter(Boolean)).size;
       const totalHrs    = filteredTimesheetRows.reduce((s,r) => s + (parseFloat(r.hours)||0), 0);
-      setPreview({ projCount, peopleCount, totalHrs: totalHrs.toFixed(1) });
+      const previewRateMap = Object.fromEntries(team.map(t => [t.name.trim(), parseFloat(t.rate) || 0]));
+      const previewBlended = team.reduce((s,t) => s + (parseFloat(t.rate)||0), 0) / team.length;
+      const personHrs = {};
+      filteredTimesheetRows.forEach(r => {
+        const n = (r.user_name || "").trim();
+        if (n) personHrs[n] = (personHrs[n] || 0) + (parseFloat(r.hours) || 0);
+      });
+      const perPerson = Object.entries(personHrs)
+        .map(([name, hrs]) => ({ name, hrs, cost: hrs * (previewRateMap[name] ?? previewBlended) }))
+        .sort((a, b) => b.hrs - a.hrs);
+      setPreview({ projCount, peopleCount, totalHrs: totalHrs.toFixed(1), perPerson });
 
       const wb = buildExcel({
         timesheetRows: filteredTimesheetRows,
@@ -996,7 +1021,11 @@ export default function App() {
           </div>
           {/* Group by team */}
           {["Design","Engineering","Presales","Projects","Service"].map(teamName => {
-            const members = team.map((t,i) => ({...t, i})).filter(t => t.team === teamName);
+            const allMembers = team.map((t,i) => ({...t, i})).filter(t => t.team === teamName);
+            const members = projectActiveUsers
+              ? allMembers.filter(m => projectActiveUsers.has(m.name.trim()))
+              : allMembers;
+            if (members.length === 0) return null;
             return (
               <div key={teamName} style={{ marginBottom:20 }}>
                 <div style={{
@@ -1031,6 +1060,14 @@ export default function App() {
               </div>
             );
           })}
+          {projectActiveUsers && (() => {
+            const hiddenCount = team.filter(t => !projectActiveUsers.has(t.name.trim())).length;
+            return hiddenCount > 0 ? (
+              <div style={{ fontSize:12, color:"#475569", fontFamily:"'DM Mono',monospace", marginBottom:8 }}>
+                {hiddenCount} team member{hiddenCount !== 1 ? "s" : ""} hidden — no time logged against this project
+              </div>
+            ) : null;
+          })()}
           <div style={{ marginTop:4, fontSize:12, color:"#475569", fontFamily:"'DM Mono',monospace" }}>
             Avg blended rate: £{(team.reduce((s,t)=>s+(parseFloat(t.rate)||0),0)/team.length).toFixed(2)}/hr
             &nbsp;·&nbsp; Used for project margin calculations
@@ -1063,19 +1100,43 @@ export default function App() {
           )}
 
           {status === "done" && preview && (
-            <div style={{ display:"flex", gap:12, marginBottom:20, flexWrap:"wrap", justifyContent:"center" }}>
-              {[
-                { label:"Projects", value: preview.projCount },
-                { label:"Team members", value: preview.peopleCount },
-                { label:"Hours logged", value: preview.totalHrs },
-                { label:"Sheets generated", value: 5 },
-              ].map(s => (
-                <div key={s.label} className="stat-chip" style={{ minWidth:120 }}>
-                  <div style={{ fontFamily:"'DM Serif Display',serif", fontSize:24, color:"#10b981" }}>{s.value}</div>
-                  <div style={{ fontSize:11, color:"#64748b", fontFamily:"'DM Mono',monospace", marginTop:2 }}>{s.label}</div>
+            <>
+              <div style={{ display:"flex", gap:12, marginBottom:16, flexWrap:"wrap", justifyContent:"center" }}>
+                {[
+                  { label:"Projects", value: preview.projCount },
+                  { label:"Team members", value: preview.peopleCount },
+                  { label:"Hours logged", value: preview.totalHrs },
+                  { label:"Sheets generated", value: 5 },
+                ].map(s => (
+                  <div key={s.label} className="stat-chip" style={{ minWidth:120 }}>
+                    <div style={{ fontFamily:"'DM Serif Display',serif", fontSize:24, color:"#10b981" }}>{s.value}</div>
+                    <div style={{ fontSize:11, color:"#64748b", fontFamily:"'DM Mono',monospace", marginTop:2 }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+              {preview.perPerson && preview.perPerson.length > 0 && (
+                <div style={{ marginBottom:20, border:"1px solid #1e293b", borderRadius:10, overflow:"hidden", textAlign:"left" }}>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:"'DM Mono',monospace", fontSize:12 }}>
+                    <thead>
+                      <tr style={{ background:"rgba(255,255,255,0.03)", borderBottom:"1px solid #1e293b" }}>
+                        <th style={{ padding:"8px 14px", color:"#475569", fontWeight:500, textAlign:"left" }}>Person</th>
+                        <th style={{ padding:"8px 14px", color:"#475569", fontWeight:500, textAlign:"right" }}>Hours</th>
+                        <th style={{ padding:"8px 14px", color:"#475569", fontWeight:500, textAlign:"right" }}>Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.perPerson.map((p, i) => (
+                        <tr key={p.name} style={{ borderBottom: i < preview.perPerson.length - 1 ? "1px solid #0f172a" : "none", background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.02)" }}>
+                          <td style={{ padding:"7px 14px", color:"#e2e8f0" }}>{p.name}</td>
+                          <td style={{ padding:"7px 14px", color:"#cbd5e1", textAlign:"right" }}>{p.hrs.toFixed(1)}</td>
+                          <td style={{ padding:"7px 14px", color:"#10b981", textAlign:"right" }}>£{p.cost.toFixed(0)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              ))}
-            </div>
+              )}
+            </>
           )}
 
           <button
