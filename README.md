@@ -1,70 +1,58 @@
-# Getting Started with Create React App
+# CLAUDE.md
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+ This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Available Scripts
+ ## Commands
 
-In the project directory, you can run:
+ ```bash
+ npm start          # Dev server at http://localhost:3000
+ npm run build      # Production build to /build
+ npm test           # Run tests (interactive watch mode)
+ npm test -- --watchAll=false  # Run tests once (CI mode)
+ npm run deploy     # Build and deploy to GitHub Pages (jamesgarcia246.github.io/labour-report)
+ ```
 
-### `npm start`
+ ## Architecture
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+ This is a single-file React app (`src/App.js`) — all logic, UI, and Excel generation lives there. It is a labour/timesheet reporting tool that takes two CSV inputs and generates Excel reports.
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+ ### Data Flow
 
-### `npm test`
+ 1. User uploads two CSV files: a **timesheet** (hours per person per day per project) and a **task/budget** file (project budgets and planned hours).
+ 2. CSVs are parsed client-side (`parseCSV`, `readFile`).
+ 3. Name mapping is applied (`nameMap` state) to reconcile CSV names with the canonical `TEAM_DEFAULT` roster.
+ 4. The app computes derived metrics (burn rate, utilisation, variance) and passes everything to an Excel builder function.
+ 5. An `.xlsx` file is generated in-browser via `ExcelJS` and downloaded.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+ ### Key Sections in App.js
 
-### `npm run build`
+ - **Constants** (line ~4): `DEPARTMENTS`, `TEAM_DEFAULT` (canonical team roster with dept/rate), `REPORT_TYPES`
+ - **Helpers** (line ~35): CSV parsing, file reading, formatting (`fmtGBP`, `fmtPct`, `fmtHrs`, etc.)
+ - **Excel Styles** (line ~73): `XL` style constants and helper functions (`xlStyleRow`, `xlTitle`, `xlSection`, `xlHeader`, `xlData`, `xlSubtotal`, `xlTotal`)
+ - **Excel Builders** (line ~188): Three report builder functions — `buildAllProjectsReport`, `buildProjectViewReport`, `buildPersonViewReport` — each producing a multi-sheet workbook
+ - **UI Components** (line ~626): `DropZone`, `MultiSelect`
+ - **Main App** (line ~725): All state, parsing effects, and render
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+ ### Report Types
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+ | ID | Builder | Sheets |
+ |---|---|---|
+ | `all` | `buildAllProjectsReport` | Dashboard, Project Profitability, Utilisation, Raw Timesheet |
+ | `project` | `buildProjectViewReport` | Project Summary, Hours by Person, Raw Timesheet (filtered) |
+ | `person` | `buildPersonViewReport` | Person Utilisation Summary, Hours by Project, Day-by-day Breakdown |
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+ ### State Overview (Main App)
 
-### `npm run eject`
+ - `tsRows` / `taskRows` — parsed CSV data
+ - `team` — roster with per-person rate overrides on top of dept defaults
+ - `deptRates` — default hourly rates per department
+ - `nameMap` — maps CSV name strings to canonical team names
+ - `reportType`, `selectedProjects`, `selectedPeople` — report filtering
+ - `startDate`, `endDate`, `workingDays` — period configuration
+ - `status`, `errorMsg`, `preview` — UI feedback state
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+ ### Dependencies of Note
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+ - `exceljs` — Excel file generation (not `xlsx`, despite `xlsx` being in package.json — check actual import)
+ - `react-scripts` 5 (Create React App) — no custom webpack config
+ - Deployed via `gh-pages` to GitHub Pages
