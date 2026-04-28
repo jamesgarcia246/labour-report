@@ -11,18 +11,18 @@ const TEAM_DEFAULT = [
   // Engineering
   { name: "Andy Timms",            team: "Engineering", rate: 50 },
   { name: "Cameron Birtwhistle",   team: "Engineering", rate: 50 },
-  { name: "David Gurjao",          team: "Engineering", rate: 50 },
+  { name: "David Gurjao ",          team: "Engineering", rate: 50 },
   { name: "Dermot McGee",          team: "Engineering", rate: 50 },
-  { name: "Ionut Dan",             team: "Engineering", rate: 50 },
+  { name: "Dan Ionut",             team: "Engineering", rate: 50 },
   { name: "James Harris",          team: "Engineering", rate: 50 },
   { name: "Leonidas Likskendaj",   team: "Engineering", rate: 50 },
-  { name: "Maciej Dulkowski",      team: "Engineering", rate: 50 },
-  { name: "Reiss Lewis",           team: "Engineering", rate: 50 },
+  { name: "Magic Dulkowski",      team: "Engineering", rate: 50 },
+  { name: "Reiss lewis",           team: "Engineering", rate: 50 },
   // Presales
   { name: "Ando Goddess",          team: "Presales",    rate: 50 },
   { name: "Matt Horsfall",         team: "Presales",    rate: 50 },
   // Projects
-  { name: "Arron-James Pienaar",   team: "Projects",    rate: 50 },
+  { name: "Aaron-James Pienaar",   team: "Projects",    rate: 50 },
   { name: "Rob Elkins",            team: "Projects",    rate: 50 },
   { name: "Rupert Merryweather",   team: "Projects",    rate: 50 },
   // Service
