@@ -11,12 +11,12 @@ const TEAM_DEFAULT = [
   { name: "Ollie Allington",     dept: "Design",      rate: 50 },
   { name: "Andy Timms",          dept: "Engineering", rate: 50 },
   { name: "Cameron Birtwhistle", dept: "Engineering", rate: 50 },
-  { name: "David Gurjao ",       dept: "Engineering", rate: 50 },
+  { name: "David Gurjao",        dept: "Engineering", rate: 50 },
   { name: "Dermot McGee",        dept: "Engineering", rate: 50 },
   { name: "Dan Ionut ",          dept: "Engineering", rate: 50 },
   { name: "James Harris",        dept: "Engineering", rate: 50 },
   { name: "Leonidas Likskendaj", dept: "Engineering", rate: 50 },
-  { name: "Magic Dulkowski ",    dept: "Engineering", rate: 50 },
+  { name: "Magic Dulkowski",     dept: "Engineering", rate: 50 },
   { name: "Reiss lewis",         dept: "Engineering", rate: 50 },
   { name: "Ando Goddess",        dept: "Presales",    rate: 50 },
   { name: "Matt Horsfall",       dept: "Presales",    rate: 50 },
@@ -28,11 +28,7 @@ const TEAM_DEFAULT = [
   { name: "Sodrul Islam",        dept: "Service",     rate: 50 },
 ];
 
-const NAME_ALIASES = {
-  "Aaron-James Pienaar": "Arron-James Pienaar",
-  "Magic Dulkowski":     "Maciej Dulkowski",
-  "Magic Dulkowski ":    "Maciej Dulkowski",
-};
+const NAME_ALIASES = {};
 
 const REPORT_TYPES = [
   { id: "all",     label: "All Projects",  icon: "◈", desc: "Full portfolio view — all projects and all team members" },
