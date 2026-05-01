@@ -1,3 +1,4 @@
+// v2.1 — name alias fix
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import ExcelJS from "exceljs";
 
@@ -21,10 +22,17 @@ const TEAM_DEFAULT = [
   { name: "Matt Horsfall",       dept: "Presales",    rate: 50 },
   { name: "Aaron-James Pienaar", dept: "Projects",    rate: 50 },
   { name: "Rob Elkins",          dept: "Projects",    rate: 50 },
+  { name: "Michelle Ramirez",    dept: "Projects",    rate: 50 },
   { name: "Rupert Merryweather", dept: "Projects",    rate: 50 },
   { name: "Darren Williams",     dept: "Service",     rate: 50 },
   { name: "Sodrul Islam",        dept: "Service",     rate: 50 },
 ];
+
+const NAME_ALIASES = {
+  "Aaron-James Pienaar": "Arron-James Pienaar",
+  "Magic Dulkowski":     "Maciej Dulkowski",
+  "Magic Dulkowski ":    "Maciej Dulkowski",
+};
 
 const REPORT_TYPES = [
   { id: "all",     label: "All Projects",  icon: "◈", desc: "Full portfolio view — all projects and all team members" },
@@ -782,7 +790,7 @@ export default function App() {
   const [team, setTeam] = useState(TEAM_DEFAULT.map(t => ({ ...t, override: null })));
 
   // Name mapping
-  const [nameMap, setNameMap] = useState({});
+  const [nameMap, setNameMap] = useState(NAME_ALIASES);
   const [showMapping, setShowMapping] = useState(false);
   const [showAllMappings, setShowAllMappings] = useState(false);
 
